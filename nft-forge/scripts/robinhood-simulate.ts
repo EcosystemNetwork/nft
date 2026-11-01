@@ -57,7 +57,24 @@ async function run(network: EvmNetwork) {
   const deployData = encodeDeployData({
     abi: artifact.abi,
     bytecode: artifact.bytecode as Hex,
-    args: ["Space Pirates", "SPIRATE", "ipfs://bafy/", "ipfs://bafy/collection.json", SUPPLY, 1n, FROM, 500n, keccak256(toHex("p")), FROM],
+    args: [
+      {
+        name: "Space Pirates",
+        symbol: "SPIRATE",
+        baseURI: "ipfs://bafy/",
+        contractURI: "ipfs://bafy/collection.json",
+        unrevealedURI: "",
+        maxSupply: SUPPLY,
+        startTokenId: 1n,
+        reserved: SUPPLY,
+        royaltyReceiver: FROM,
+        royaltyBps: 500n,
+        provenanceHash: keccak256(toHex("p")),
+        revealCommitment: `0x${"0".repeat(64)}`,
+        payout: FROM,
+        owner: FROM,
+      },
+    ],
   });
   const created = await client.call({ account: FROM, data: deployData });
   check(created.data === artifact.deployedBytecode, "Contract deploys (creation returns the compiled runtime bytecode)", `${((created.data!.length - 2) / 2).toLocaleString()} bytes`);

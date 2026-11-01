@@ -3,15 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { AppFrame, Icon, MobileNav, Sidebar, type NavItem } from "@/components/shell";
+import { AppFrame, Icon, MobileNav, SessionFooter, Sidebar, STUDIO_NAV } from "@/components/shell";
 import { api, Badge, Button, Card, Empty, Field, fmt, Input, Modal, PageHeader, Select, Stat, Textarea, toast, useApi } from "@/components/ui";
 import type { Project } from "@/lib/store";
 
 type ProjectRow = Project & {
   stats: { assets: number; categories: number; traits: number; generated: number; approved: number };
 };
-
-const NAV: NavItem[] = [{ href: "/", label: "Projects", icon: "dashboard" }];
 
 const STEPS = [
   ["Describe", "AI blueprint & art bible"],
@@ -38,7 +36,7 @@ export default function Dashboard() {
     <AppFrame
       sidebar={
         <Sidebar
-          items={NAV}
+          items={STUDIO_NAV}
           top={
             <Card glow className="p-4">
               <div className="text-[13px] font-medium text-green-300">Ready to forge</div>
@@ -48,10 +46,10 @@ export default function Dashboard() {
               </Button>
             </Card>
           }
-          footer={<div className="px-2 text-[11px] text-dim">NFT Forge v0.1 · MVP</div>}
+          footer={<SessionFooter />}
         />
       }
-      mobile={<MobileNav items={NAV} />}
+      mobile={<MobileNav items={STUDIO_NAV} />}
     >
       <PageHeader
         title="Projects"

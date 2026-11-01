@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import sharp, { type Metadata } from "sharp";
+import { embedPngText } from "./sd/png-text";
 import {
   HttpError,
   listAssets,
@@ -8,6 +9,7 @@ import {
   withProjectLock,
   writeAssetFile,
   type Asset,
+  type AssetGeneration,
 } from "./store";
 
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -29,7 +31,14 @@ export async function ingestAsset(
   projectId: string,
   data: Buffer,
   fileName: string,
-  opts: { categoryHint?: string; source?: Asset["source"]; replaceAssetId?: string; tags?: string[] } = {},
+  opts: {
+    categoryHint?: string;
+    source?: Asset["source"];
+    replaceAssetId?: string;
+    tags?: string[];
+    parametersText?: string;
+    generation?: AssetGeneration;
+  } = {},
 ): Promise<IngestResult> {
   if (data.length > MAX_BYTES) throw new HttpError(413, `${fileName}: larger than 25 MB`);
   let meta: Metadata;
@@ -41,7 +50,8 @@ export async function ingestAsset(
   if (!meta.format || !ACCEPTED.has(meta.format))
     throw new HttpError(415, `${fileName}: unsupported format ${meta.format ?? "unknown"} (PSD: export layers as PNG)`);
 
-  const png = await sharp(data, { limitInputPixels: MAX_PIXELS }).ensureAlpha().png({ compressionLevel: 8 }).toBuffer();
+  let png = await sharp(data, { limitInputPixels: MAX_PIXELS }).ensureAlpha().png({ compressionLevel: 8 }).toBuffer();
+  if (opts.parametersText) png = embedPngText(png, "parameters", opts.parametersText) as typeof png;
   const stats = await sharp(png).stats();
   const alpha = stats.channels[3];
   const hasTransparency = alpha ? alpha.min < 255 : false;
@@ -68,6 +78,7 @@ export async function ingestAsset(
         hasTransparency,
         fileName,
       });
+      if (opts.generation) a.generation = opts.generation;
       a.versions.push({ version, sha256, bytes: png.length, width: info.width!, height: info.height!, at: now });
       await saveAssets(projectId, assets);
       return { asset: a, replaced: true };
@@ -91,6 +102,7 @@ export async function ingestAsset(
       version: 1,
       versions: [{ version: 1, sha256, bytes: png.length, width: info.width!, height: info.height!, at: now }],
       createdAt: now,
+      ...(opts.generation ? { generation: opts.generation } : {}),
     };
     await writeAssetFile(projectId, asset.id, 1, png);
     assets.push(asset);

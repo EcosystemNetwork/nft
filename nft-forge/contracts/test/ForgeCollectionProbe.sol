@@ -25,8 +25,22 @@ contract ForgeCollectionProbe {
 
     constructor(uint256 mintCount, uint256 maxSupply) {
         ForgeCollection c = new ForgeCollection(
-            "Space Pirates", "SPIRATE", "ipfs://bafyprobe/", "ipfs://bafyprobe/collection.json",
-            maxSupply, 1, address(0xC0FFEE), 500, keccak256("provenance"), address(this)
+            ForgeCollection.InitParams({
+                name: "Space Pirates",
+                symbol: "SPIRATE",
+                baseURI: "ipfs://bafyprobe/",
+                contractURI: "ipfs://bafyprobe/collection.json",
+                unrevealedURI: "",
+                maxSupply: maxSupply,
+                startTokenId: 1,
+                reserved: maxSupply,
+                royaltyReceiver: address(0xC0FFEE),
+                royaltyBps: 500,
+                provenanceHash: keccak256("provenance"),
+                revealCommitment: bytes32(0),
+                payout: address(this),
+                owner: address(this)
+            })
         );
         address holder = address(0xBEEF);
         if (mintCount > 0) c.mintBatch(holder, mintCount);

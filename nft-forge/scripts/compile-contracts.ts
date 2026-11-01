@@ -73,3 +73,7 @@ console.log(`ForgeCollection: ${main.compiler} (${EVM_VERSION}), runtime ${((mai
 const probe = compile("contracts/test/ForgeCollectionProbe.sol", "ForgeCollectionProbe");
 writeFileSync(path.join(root, "tests/ForgeCollectionProbe.artifact.json"), JSON.stringify({ abi: probe.abi, bytecode: probe.bytecode }));
 console.log(`ForgeCollectionProbe: compiled (test harness)`);
+
+const attacker = compile("contracts/test/ReentrantMinter.sol", "ReentrantMinter");
+writeFileSync(path.join(root, "tests/ReentrantMinter.artifact.json"), JSON.stringify({ abi: attacker.abi, bytecode: attacker.bytecode }));
+console.log(`ReentrantMinter: compiled (test harness)`);

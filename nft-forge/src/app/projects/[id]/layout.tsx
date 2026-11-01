@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ProjectProvider, useProject } from "@/components/project-context";
-import { AppFrame, Icon, MobileNav, Sidebar, type NavItem } from "@/components/shell";
+import { AppFrame, Icon, MobileNav, SessionFooter, Sidebar, type NavItem } from "@/components/shell";
 import { Badge, Card, fmt, Spinner } from "@/components/ui";
 
 function nav(id: string): NavItem[] {
@@ -12,6 +12,7 @@ function nav(id: string): NavItem[] {
     { href: b, label: "Overview", icon: "dashboard" },
     { href: `${b}/architect`, label: "AI Architect", icon: "architect" },
     { href: `${b}/assets`, label: "Asset Studio", icon: "assets" },
+    { href: `${b}/diffusion`, label: "Diffusion", icon: "palette" },
     { href: `${b}/traits`, label: "Trait Engine", icon: "traits" },
     { href: `${b}/generate`, label: "Generator", icon: "generate" },
     { href: `${b}/gallery`, label: "Gallery & Review", icon: "gallery" },
@@ -19,6 +20,7 @@ function nav(id: string): NavItem[] {
     { href: `${b}/qa`, label: "Quality Assurance", icon: "qa" },
     { href: `${b}/export`, label: "Export", icon: "export" },
     { href: `${b}/publish`, label: "IPFS Publishing", icon: "cloud" },
+    { href: `${b}/sale`, label: "Mint & Sale", icon: "sale" },
     { href: `${b}/deploy`, label: "Deployment", icon: "deploy" },
     { href: `${b}/settings`, label: "Settings", icon: "settings" },
   ];
@@ -60,7 +62,7 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
         </div>
       }
     >
-      <AppFrame sidebar={<Sidebar items={items} top={<ProjectCard />} />} mobile={<MobileNav items={items} />}>
+      <AppFrame sidebar={<Sidebar items={items} top={<ProjectCard />} footer={<SessionFooter />} />} mobile={<MobileNav items={items} />}>
         {children}
       </AppFrame>
     </ProjectProvider>

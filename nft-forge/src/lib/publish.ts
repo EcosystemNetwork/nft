@@ -1,10 +1,11 @@
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { contentFingerprint } from "./deployments";
-import { buildCollectionMetadata, buildTokenMetadata, imageFileName } from "./engine/metadata";
+import { artworkIdFor, buildCollectionMetadata, buildRevealedTokenMetadata, buildTokenMetadata, imageFileName } from "./engine/metadata";
 import { gatewayCheck, packDirectory, type GatewayResult, type PackEntry } from "./ipfs";
 import { startTaskJob } from "./jobs";
 import { existingRender } from "./render";
+import { getSale, unrevealedImage, unrevealedMetadata } from "./sale";
 import { getCollection, getProject, HttpError, newId, paths, updateProject, withProjectLock } from "./store";
 
 // ---------------------------------------------------------------------------
@@ -26,6 +27,10 @@ export interface Publication {
   cars: Record<"images" | "metadata", { file: string; bytes: number; blocks: number }>;
   uploads: { provider: string; at: string; ok: boolean; message: string }[];
   availability?: { at: string; ok: boolean; inconclusive: boolean; results: GatewayResult[] };
+  /** Delayed-reveal placeholder (ipfs://<metadataCID>/unrevealed.json), when the sale uses one. */
+  unrevealedURI?: string;
+  /** Revealed metadata per deployment: token N.json describes artwork artworkId(N). */
+  reveals?: Record<string, { offset: number; cid: string; baseURI: string; car: { file: string; bytes: number; blocks: number }; createdAt: string; uploaded?: boolean }>;
 }
 
 const recordFile = (id: string) => path.join(paths.project(id), "ipfs.json");
@@ -80,6 +85,9 @@ export function startPack(projectId: string) {
       if (!file) throw new Error(`Token #${n.tokenId} is not rendered. Render the collection first.`);
       images.push({ name: imageFileName(n.tokenId, project.canvas), path: file });
     }
+    const sale = await getSale(projectId);
+    const delayed = sale.enabled && sale.delayedReveal;
+    if (delayed) images.push({ name: "unrevealed.png", bytes: await unrevealedImage(project) });
     await fs.mkdir(carDir(projectId), { recursive: true });
     await checkpoint();
 
@@ -103,6 +111,7 @@ export function startPack(projectId: string) {
         JSON.stringify({ ...buildCollectionMetadata(template, nfts.length), image: `${imageBaseUri}${imageFileName(nfts[0].tokenId, project.canvas)}` }, null, 2),
       ),
     });
+    if (delayed) metaEntries.push({ name: "unrevealed.json", bytes: new TextEncoder().encode(JSON.stringify(unrevealedMetadata(sale, `${imageBaseUri}unrevealed.png`), null, 2)) });
     const metaCar = path.join(carDir(projectId), "metadata.car");
     const meta = await packDirectory(metaEntries, metaCar);
     job.done = 2;
@@ -123,6 +132,7 @@ export function startPack(projectId: string) {
         metadata: { file: "metadata.car", bytes: meta.bytes, blocks: meta.blocks },
       },
       uploads: [],
+      unrevealedURI: delayed ? `ipfs://${meta.root}/unrevealed.json` : undefined,
     };
     await savePublication(projectId, publication);
     job.done = 3;
@@ -131,8 +141,43 @@ export function startPack(projectId: string) {
 }
 
 export function carPath(projectId: string, name: string) {
-  if (name !== "images.car" && name !== "metadata.car") throw new HttpError(404, "Not found");
+  if (name !== "images.car" && name !== "metadata.car" && !/^revealed-[\w-]{1,40}\.car$/.test(name)) throw new HttpError(404, "Not found");
   return path.join(carDir(projectId), name);
+}
+
+/**
+ * Delayed reveal (mainnet): pack the revealed metadata for one deployment and offset.
+ * Images are unchanged (same images CID); only metadata is remapped so that token N.json
+ * carries artwork artworkId(N) under token N's name.
+ */
+export function startRevealPack(projectId: string, depId: string, offset: number, supply: number, startTokenId: number) {
+  return startTaskJob(projectId, "ipfs", async (job) => {
+    const pub = await getPublication(projectId);
+    if (!pub) throw new Error("Pack the collection first.");
+    const project = await getProject(projectId);
+    const nfts = new Map(((await getCollection(projectId))?.nfts ?? []).map((n) => [n.tokenId, n]));
+    if (nfts.size !== supply) throw new Error("The collection changed since deployment.");
+    job.total = 1;
+    job.message = `Packing revealed metadata (offset ${offset})…`;
+    const template = { ...project.metadata, imageBaseUri: pub.imageBaseUri };
+    const entries: PackEntry[] = [];
+    for (let t = startTokenId; t < startTokenId + supply; t++) {
+      const art = nfts.get(artworkIdFor(t, startTokenId, supply, offset))!;
+      entries.push({ name: `${t}.json`, bytes: new TextEncoder().encode(JSON.stringify(buildRevealedTokenMetadata(template, project.config.categories, project.canvas, art, t), null, 2)) });
+    }
+    entries.push({
+      name: "collection.json",
+      bytes: new TextEncoder().encode(JSON.stringify({ ...buildCollectionMetadata(template, supply), image: `${pub.imageBaseUri}${imageFileName(startTokenId, project.canvas)}` }, null, 2)),
+    });
+    const file = `revealed-${depId}.car`;
+    const r = await packDirectory(entries, path.join(carDir(projectId), file));
+    await mutatePublication(projectId, (p) => {
+      p.reveals ??= {};
+      p.reveals[depId] = { offset, cid: r.root, baseURI: `ipfs://${r.root}/`, car: { file, bytes: r.bytes, blocks: r.blocks }, createdAt: new Date().toISOString() };
+    });
+    job.done = 1;
+    return { message: `Revealed metadata ${r.root} (offset ${offset}). Pin it, then reveal.` };
+  });
 }
 
 /**
@@ -147,21 +192,28 @@ export function startFilebaseUpload(projectId: string) {
     if (!pub) throw new Error("Pack the collection first.");
     const { S3Client, PutObjectCommand, HeadObjectCommand } = await import("@aws-sdk/client-s3");
     const s3 = new S3Client({ endpoint: "https://s3.filebase.com", region: "us-east-1", credentials: { accessKeyId: key, secretAccessKey: secret } });
-    job.total = 2;
+    const cars: { kind: string; file: string; cid: string; bytes: number; revealDep?: string }[] = [
+      { kind: "images", file: "images.car", cid: pub.imagesCid, bytes: pub.cars.images.bytes },
+      { kind: "metadata", file: "metadata.car", cid: pub.metadataCid, bytes: pub.cars.metadata.bytes },
+      ...Object.entries(pub.reveals ?? {}).map(([dep, r]) => ({ kind: `revealed metadata (${dep})`, file: r.car.file, cid: r.cid, bytes: r.car.bytes, revealDep: dep })),
+    ];
+    job.total = cars.length;
     const results: string[] = [];
-    for (const [kind, expected] of [["images", pub.imagesCid], ["metadata", pub.metadataCid]] as const) {
+    for (const car of cars) {
       await checkpoint();
-      const file = carPath(projectId, `${kind}.car`);
-      const Key = `${projectId}/${kind}-${expected}.car`;
-      job.message = `Uploading ${kind} CAR (${(pub.cars[kind].bytes / 1e6).toFixed(1)} MB)…`;
-      await s3.send(new PutObjectCommand({ Bucket: bucket, Key, Body: createReadStream(file), ContentLength: pub.cars[kind].bytes, Metadata: { import: "car" } }));
+      const Key = `${projectId}/${car.file.replace(/\.car$/, "")}-${car.cid}.car`;
+      job.message = `Uploading ${car.kind} CAR (${(car.bytes / 1e6).toFixed(1)} MB)…`;
+      await s3.send(new PutObjectCommand({ Bucket: bucket, Key, Body: createReadStream(carPath(projectId, car.file)), ContentLength: car.bytes, Metadata: { import: "car" } }));
       const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key }));
       const got = head.Metadata?.cid;
-      if (got !== expected) throw new Error(`Filebase reported CID ${got ?? "none"} for ${kind}, expected ${expected}.`);
-      results.push(`${kind} ✓`);
+      if (got !== car.cid) throw new Error(`Filebase reported CID ${got ?? "none"} for ${car.kind}, expected ${car.cid}.`);
+      results.push(`${car.kind} ✓`);
       job.done++;
     }
-    await mutatePublication(projectId, (p) => p.uploads.push({ provider: "filebase", at: new Date().toISOString(), ok: true, message: "Both CARs imported; root CIDs match" }));
+    await mutatePublication(projectId, (p) => {
+      p.uploads.push({ provider: "filebase", at: new Date().toISOString(), ok: true, message: `${cars.length} CAR(s) imported; root CIDs match` });
+      for (const c of cars) if (c.revealDep && p.reveals?.[c.revealDep]) p.reveals[c.revealDep].uploaded = true;
+    });
     return { message: `Uploaded to Filebase: ${results.join(", ")}` };
   });
 }

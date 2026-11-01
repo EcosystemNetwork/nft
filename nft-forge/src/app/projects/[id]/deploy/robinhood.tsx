@@ -6,8 +6,10 @@ import { useProject } from "@/components/project-context";
 import { api, Badge, Button, Card, CardHeader, cx, Empty, Field, fmt, Input, Modal, PageHeader, Progress, Select, toast, useApi } from "@/components/ui";
 import { BRIDGE_URL, EVM_CHAINS, evmExplorer, FAUCET_URL, NETWORK_LABEL, type EvmNetwork } from "@/lib/evm/chains";
 import type { EvmApproval, EvmDeployment } from "@/lib/evm/types";
+import type { SaleConfig } from "@/lib/sale";
+import { SalePanel } from "./sale-panel";
 
-type Dep = EvmDeployment & { constructorArgs: (string | number)[] };
+type Dep = EvmDeployment;
 type Readiness = { checks: { id: string; label: string; ok: boolean; detail: string }[]; ready: boolean; fingerprint: string };
 type Estimate = Awaited<ReturnType<typeof import("@/lib/evm/browser").estimateEvm>>;
 
@@ -34,6 +36,9 @@ function Studio() {
   const { account, chainId, wallet } = useEvmWallet();
   const { data, reload } = useApi<{ deployments: EvmDeployment[]; approvals: EvmApproval[] }>(`${base}/robinhood`);
   const { data: ready, reload: reloadReady, loading: readyLoading } = useApi<Readiness>(`${base}/robinhood/readiness`);
+  const { data: saleView } = useApi<{ sale: SaleConfig }>(`${base}/sale`);
+  const sale = saleView?.sale;
+  const saleOn = Boolean(sale?.enabled);
   const [testCount, setTestCount] = useState(25);
   const [hosting, setHosting] = useState<"preview" | "hosted">("preview");
   const [baseURI, setBaseURI] = useState("");
@@ -188,11 +193,13 @@ function Studio() {
             <Badge tone="cyan">TESTNET · 46630</Badge>
           </div>
           <p className="mt-1 text-[13px] text-muted">
-            Deploys the collection contract with the real provenance hash and royalties, mints the first N tokens to your wallet, publishes the source on Blockscout and verifies everything on-chain.
+            {saleOn
+              ? `Deploys the collection contract with the real provenance hash, royalties and sale settings (reserve ${sale!.reserved}${sale!.delayedReveal ? ", delayed reveal" : ""}), mints reserve tokens to your wallet, publishes the source and verifies everything on-chain. Then push the sale phases and test minting from the public mint page.`
+              : "Deploys the collection contract with the real provenance hash and royalties, mints the first N tokens to your wallet, publishes the source on Blockscout and verifies everything on-chain."}
           </p>
           <div className="mt-5 grid grid-cols-2 gap-4">
-            <Field label="Tokens to mint">
-              <Input type="number" min={1} max={project.config.supply} value={testCount} onChange={(e) => setTestCount(Number(e.target.value))} />
+            <Field label={saleOn ? "Reserve tokens to mint now" : "Tokens to mint"} hint={saleOn ? `Up to the reserve (${sale!.reserved})` : undefined}>
+              <Input type="number" min={saleOn ? 0 : 1} max={saleOn ? sale!.reserved : project.config.supply} value={testCount} onChange={(e) => setTestCount(Number(e.target.value))} />
             </Field>
             <Field label="Metadata" hint={hosting === "preview" ? "Served by this NFT Forge server. Fine for testing the contract; explorers and wallets elsewhere can't load it." : undefined}>
               <Select value={hosting} onChange={(e) => setHosting(e.target.value as typeof hosting)}>
@@ -250,7 +257,17 @@ function Studio() {
                 <Input value={prodContract} onChange={(e) => setProdContract(e.target.value)} placeholder="defaults to <folder>/collection.json" />
               </Field>
               <div className="text-[13px] text-amber-100">
-                Approve deploying <b>{fmt.n(project.config.supply)}</b> tokens to Robinhood Chain mainnet from <b>{account ? shortAddr(account) : "your wallet"}</b>. Type <b>{project.metadata.collectionName}</b> to confirm.
+                {saleOn ? (
+                  <>
+                    Approve deploying a <b>{fmt.n(project.config.supply)}</b>-token public-sale collection (reserve <b>{fmt.n(sale!.reserved)}</b>) to Robinhood Chain mainnet from{" "}
+                    <b>{account ? shortAddr(account) : "your wallet"}</b>.
+                  </>
+                ) : (
+                  <>
+                    Approve deploying <b>{fmt.n(project.config.supply)}</b> tokens to Robinhood Chain mainnet from <b>{account ? shortAddr(account) : "your wallet"}</b>.
+                  </>
+                )}{" "}
+                Type <b>{project.metadata.collectionName}</b> to confirm.
               </div>
               <Input value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={project.metadata.collectionName} />
               <Button variant="danger" className="w-full" disabled={!account || !prodBase || confirmName !== project.metadata.collectionName} onClick={approve}>
@@ -273,6 +290,8 @@ function Studio() {
           </Button>
         </Card>
       </div>
+
+      <SalePanel deployments={deployments} base={base} onChanged={() => void reload()} />
 
       <Diagnostics />
 
@@ -325,7 +344,7 @@ function Studio() {
                       <td className="py-3 pr-4 text-muted">{fmt.ago(d.createdAt)}</td>
                       <td className="py-3 pr-4"><Badge tone={d.network === "robinhood" ? "amber" : "cyan"}>{d.network === "robinhood" ? "mainnet" : "testnet"}</Badge></td>
                       <td className="py-3 pr-4"><Badge tone={TONE[d.status] ?? "neutral"}>{d.status}</Badge></td>
-                      <td className="py-3 pr-4 tabular-nums">{minted} / {d.mintTarget}</td>
+                      <td className="py-3 pr-4 tabular-nums" title="Owner-minted reserve tokens">{minted} / {d.mintTarget}</td>
                       <td className="py-3 pr-4 font-mono text-[12px]">
                         {d.contract ? <a className="text-violet-2 hover:underline" href={evmExplorer(d.network, "address", d.contract)} target="_blank" rel="noreferrer">{shortAddr(d.contract)}</a> : "—"}
                       </td>
@@ -435,9 +454,14 @@ function Detail({ d, onClose }: { d: EvmDeployment; onClose: () => void }) {
           <div><span className="text-muted">Owner wallet:</span> <a className="font-mono text-violet-2" href={evmExplorer(d.network, "address", d.wallet)} target="_blank" rel="noreferrer">{d.wallet}</a></div>
           {d.contract && <div><span className="text-muted">Contract:</span> <a className="font-mono text-violet-2" href={evmExplorer(d.network, "address", d.contract)} target="_blank" rel="noreferrer">{d.contract}</a></div>}
           <div><span className="text-muted">Name / symbol:</span> {p.name} ({p.symbol})</div>
-          <div><span className="text-muted">Supply:</span> {p.maxSupply} max · minting {d.mintTarget} · IDs from #{p.startTokenId}</div>
+          <div><span className="text-muted">Supply:</span> {p.maxSupply} max · owner mints {d.mintTarget} · IDs from #{p.startTokenId}</div>
+          <div>
+            <span className="text-muted">Sale:</span>{" "}
+            {p.reserved < p.maxSupply ? `public sale of ${p.maxSupply - p.reserved}, reserve ${p.reserved}, proceeds to ${shortAddr(p.payout)}` : "none (owner mints everything)"}
+          </div>
+          {p.unrevealedURI && <div className="break-all"><span className="text-muted">Unrevealed:</span> {p.unrevealedURI}{d.reveal?.revealedAt || d.reveal?.tx ? ` · revealed with offset ${d.reveal.offset}` : ""}</div>}
           <div><span className="text-muted">Royalties:</span> {p.royaltyBps / 100}% (ERC-2981)</div>
-          <div className="break-all"><span className="text-muted">Base URI:</span> {p.baseURI}</div>
+          <div className="break-all"><span className="text-muted">Base URI:</span> {p.baseURI || d.reveal?.baseURI || "set at reveal"}</div>
           <div className="break-all"><span className="text-muted">Provenance:</span> <span className="font-mono text-[12px]">{p.provenanceHash}</span></div>
           {d.sourceVerification && <div><span className="text-muted">Source:</span> {d.sourceVerification.status}: {d.sourceVerification.message}</div>}
           {d.contract && d.sourceVerification?.status !== "verified" && (

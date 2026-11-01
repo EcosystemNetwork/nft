@@ -17,7 +17,7 @@ import {
 // one-to-one onto the PRD's data model and can be swapped for Postgres + S3.
 // ---------------------------------------------------------------------------
 
-export const DATA_DIR = process.env.NFT_FORGE_DATA ?? path.join(process.cwd(), "data");
+export const DATA_DIR = process.env.NFT_FORGE_DATA ?? path.join(/* turbopackIgnore: true */ process.cwd(), "data");
 
 export type Chain = "robinhood" | "solana" | "ethereum" | "base" | "sui";
 
@@ -68,6 +68,24 @@ export interface AssetVersion {
   at: string;
 }
 
+/** Parameters from the Diffusion desk, so a layer can be sent back to the same seed and prompt. */
+export interface AssetGeneration {
+  backend: "a1111";
+  mode: "txt2img" | "img2img" | "inpaint" | "upscale";
+  prompt: string;
+  negativePrompt: string;
+  seed: number;
+  sampler: string;
+  steps: number;
+  cfg: number;
+  width: number;
+  height: number;
+  denoising?: number;
+  model?: string;
+  /** Automatic1111 infotext. Also written into the PNG `parameters` chunk. */
+  infotext?: string;
+}
+
 export interface Asset {
   id: string;
   name: string;
@@ -76,6 +94,7 @@ export interface Asset {
   categoryHint?: string;
   source: "upload" | "ai" | "procedural";
   tags: string[];
+  generation?: AssetGeneration;
   mime: string;
   width: number;
   height: number;

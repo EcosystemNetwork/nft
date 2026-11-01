@@ -9,15 +9,13 @@ import { createPublicClient, createWalletClient, custom, encodeDeployData, forma
 import type { Eip1193Provider } from "@/components/evm-wallet";
 import { EVM_CHAINS, type EvmNetwork } from "./chains";
 import artifact from "./ForgeCollection.artifact.json";
-import type { EvmDeployment, EvmEvent } from "./types";
+import { toInitParams, ZERO_HASH, type EvmDeployment, type EvmEvent, type OnchainSale } from "./types";
 
-const ABI = artifact.abi as Abi;
-type Dep = EvmDeployment & { constructorArgs: (string | number)[] };
+export const ABI = artifact.abi as Abi;
+type Dep = EvmDeployment;
 
-/** Constructor args come from the server as JSON; restore the uint256 fields. */
 function ctorArgs(d: Dep) {
-  const a = d.constructorArgs;
-  return [a[0], a[1], a[2], a[3], BigInt(a[4]), BigInt(a[5]), a[6], BigInt(a[7]), a[8], a[9]] as const;
+  return [toInitParams(d.params)] as const;
 }
 
 export async function ensureChain(provider: Eip1193Provider, network: EvmNetwork) {
@@ -81,7 +79,24 @@ export async function evmDiagnostics(network: EvmNetwork) {
     const data = encodeDeployData({
       abi: ABI,
       bytecode: artifact.bytecode as Hex,
-      args: ["Diag", "DIAG", "ipfs://x/", "ipfs://x/c.json", 3333n, 1n, from, 500n, `0x${"11".repeat(32)}`, from],
+      args: [
+        {
+          name: "Diag",
+          symbol: "DIAG",
+          baseURI: "ipfs://x/",
+          contractURI: "ipfs://x/c.json",
+          unrevealedURI: "",
+          maxSupply: 3333n,
+          startTokenId: 1n,
+          reserved: 3333n,
+          royaltyReceiver: from,
+          royaltyBps: 500n,
+          provenanceHash: `0x${"11".repeat(32)}`,
+          revealCommitment: ZERO_HASH,
+          payout: from,
+          owner: from,
+        },
+      ],
     });
     const res = await pub.call({ account: from, data });
     out.push({ check: "Contract simulation", ok: res.data === artifact.deployedBytecode, detail: `ForgeCollection deploys on ${chain.name} (${((res.data!.length - 2) / 2).toLocaleString()} bytes)` });
@@ -142,7 +157,8 @@ export async function runEvmDeployment(d: Dep, o: EvmRunOptions) {
     // 3. Mint in batches until the target is reached (on-chain totalMinted is the truth).
     await o.report({ type: "status", status: "minting" });
     for (;;) {
-      const minted = Number(await pub.readContract({ address, abi: ABI, functionName: "totalMinted" }));
+      // The owner's target is the reserve; public mints may interleave, so count reserve mints only.
+      const minted = Number(await pub.readContract({ address, abi: ABI, functionName: "reserveMinted" }));
       o.onProgress({ phase: "mint", done: minted, total: d.mintTarget });
       const remaining = d.mintTarget - minted;
       if (remaining <= 0) break;
@@ -151,12 +167,13 @@ export async function runEvmDeployment(d: Dep, o: EvmRunOptions) {
         return { stopped: true, address };
       }
       const qty = Math.min(d.batchSize, remaining);
+      const first = d.params.startTokenId + Number(await pub.readContract({ address, abi: ABI, functionName: "totalMinted" }));
       const hash = await wallet.writeContract({ address, abi: ABI, functionName: "mintBatch", args: [o.account, BigInt(qty)] });
-      await o.report({ type: "mint-sent", tx: hash, firstTokenId: d.params.startTokenId + minted, quantity: qty });
+      await o.report({ type: "mint-sent", tx: hash, firstTokenId: first, quantity: qty });
       const r = await confirmed(hash);
       if (r.status !== "success") {
         await o.report({ type: "mint-failed", tx: hash, error: "reverted" });
-        throw new Error(`Mint of #${d.params.startTokenId + minted}… reverted.`);
+        throw new Error(`Reserve mint of ${qty} reverted.`);
       }
       await o.report({ type: "mint-confirmed", tx: hash });
     }
@@ -167,4 +184,73 @@ export async function runEvmDeployment(d: Dep, o: EvmRunOptions) {
     await o.report({ type: "status", status: /reject|denied/i.test(msg) ? "cancelled" : "failed", error: msg.slice(0, 400) });
     throw e;
   }
+}
+
+// ------------------------------------------------------------- sale admin
+
+export interface PhaseArgs {
+  start: number;
+  end: number;
+  price: string;
+  maxPerWallet: number;
+  cap: number;
+  merkleRoot: `0x${string}`;
+}
+
+const samePhase = (a: PhaseArgs, b: OnchainSale["phases"][number]) =>
+  a.start === b.start && a.end === b.end && a.price === b.priceWei && a.maxPerWallet === b.maxPerWallet && a.cap === b.cap && a.merkleRoot.toLowerCase() === b.merkleRoot.toLowerCase();
+
+/** Phases whose on-chain value differs from the configuration (index-aligned). */
+export function phaseDiff(config: PhaseArgs[], onchain: OnchainSale["phases"]) {
+  return config.map((p, i) => ({ index: i, changed: !onchain[i] || !samePhase(p, onchain[i]) }));
+}
+
+async function ownerClients(d: Dep, provider: Eip1193Provider, account: `0x${string}`) {
+  if (!d.contract) throw new Error("No contract deployed yet.");
+  if (account.toLowerCase() !== d.wallet.toLowerCase()) throw new Error("Connect the wallet that owns this contract.");
+  await ensureChain(provider, d.network);
+  const chain = EVM_CHAINS[d.network];
+  return {
+    address: d.contract,
+    wallet: createWalletClient({ account, chain, transport: custom(provider) }),
+    pub: createPublicClient({ chain, transport: http() }),
+  };
+}
+
+async function send(c: Awaited<ReturnType<typeof ownerClients>>, functionName: string, args: unknown[]) {
+  const hash = await c.wallet.writeContract({ address: c.address, abi: ABI, functionName, args });
+  const r = await c.pub.waitForTransactionReceipt({ hash, timeout: 180_000 });
+  if (r.status !== "success") throw new Error(`${functionName} reverted`);
+  return hash;
+}
+
+/** Push changed phases on-chain, in index order (setPhase appends or updates). */
+export async function syncPhases(d: Dep, provider: Eip1193Provider, account: `0x${string}`, config: PhaseArgs[], onchain: OnchainSale["phases"], onSent?: (i: number) => void) {
+  const c = await ownerClients(d, provider, account);
+  if (onchain.length > config.length) throw new Error("The contract has more phases than the configuration. Phases can't be deleted on-chain; set extra phases to end in the past instead.");
+  for (const { index, changed } of phaseDiff(config, onchain)) {
+    if (!changed) continue;
+    const p = config[index];
+    await send(c, "setPhase", [BigInt(index), { start: BigInt(p.start), end: BigInt(p.end), price: BigInt(p.price), maxPerWallet: p.maxPerWallet, cap: p.cap, merkleRoot: p.merkleRoot }]);
+    onSent?.(index);
+  }
+}
+
+export async function ownerAction(d: Dep, provider: Eip1193Provider, account: `0x${string}`, action: { kind: "pause"; paused: boolean } | { kind: "withdraw" } | { kind: "freeze" }) {
+  const c = await ownerClients(d, provider, account);
+  if (action.kind === "pause") return send(c, "setPaused", [action.paused]);
+  if (action.kind === "withdraw") return send(c, "withdraw", []);
+  return send(c, "freezeMetadata", []);
+}
+
+/** Send the reveal transaction (offset and metadata prepared by the server). */
+export async function sendReveal(d: Dep, provider: Eip1193Provider, account: `0x${string}`, r: { secret: `0x${string}`; baseURI: string; offset: number }, onSent: (tx: `0x${string}`) => Promise<void>) {
+  const c = await ownerClients(d, provider, account);
+  // Simulate first: a mint since preparing changes the entropy, and the reveal would revert (OffsetMismatch).
+  await c.pub.simulateContract({ account, address: c.address, abi: ABI, functionName: "reveal", args: [r.secret, r.baseURI, BigInt(r.offset)] });
+  const hash = await c.wallet.writeContract({ address: c.address, abi: ABI, functionName: "reveal", args: [r.secret, r.baseURI, BigInt(r.offset)] });
+  await onSent(hash);
+  const rec = await c.pub.waitForTransactionReceipt({ hash, timeout: 180_000 });
+  if (rec.status !== "success") throw new Error("Reveal reverted");
+  return hash;
 }

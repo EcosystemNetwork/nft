@@ -17,7 +17,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { EVM_CHAINS, evmExplorer } from "../src/lib/evm/chains";
 import { runEvmDeployment } from "../src/lib/evm/browser";
 import type { Eip1193Provider } from "../src/components/evm-wallet";
-import { applyEvmEvent, constructorArgs, createEvmDeployment, getEvmDeployment, submitSourceVerification, verifyEvmDeployment } from "../src/lib/evm-deployments";
+import { applyEvmEvent, createEvmDeployment, getEvmDeployment, submitSourceVerification, verifyEvmDeployment } from "../src/lib/evm-deployments";
 
 const projectId = process.argv[2] ?? "space-pirates-genesis";
 const count = Number(process.argv[3] ?? 25);
@@ -82,7 +82,7 @@ async function main() {
 
   const created = await createEvmDeployment(projectId, { mode: "test", wallet: account.address, testCount: count }, process.env.FORGE_ORIGIN ?? "http://localhost:3000");
   console.log(`Deployment ${created.id}: minting ${created.mintTarget} of ${created.params.maxSupply}, provenance ${created.params.provenanceHash}`);
-  const dep = { ...(await getEvmDeployment(projectId, created.id)), constructorArgs: constructorArgs(created.params).map((a) => (typeof a === "bigint" ? a.toString() : a)) };
+  const dep = await getEvmDeployment(projectId, created.id);
 
   const t0 = Date.now();
   const res = await runEvmDeployment(dep as never, {

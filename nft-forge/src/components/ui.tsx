@@ -15,7 +15,15 @@ export async function api<T = unknown>(url: string, init?: RequestInit & { json?
     body: init?.json !== undefined ? JSON.stringify(init.json) : init?.body,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`);
+  if (!res.ok) {
+    const message = (data as { error?: string }).error ?? `Request failed (${res.status})`;
+    if (res.status === 401 && typeof window !== "undefined" && !url.startsWith("/api/auth/") && !location.pathname.startsWith("/login") && !location.pathname.startsWith("/setup")) {
+      const setup = (data as { setup?: boolean }).setup;
+      const next = encodeURIComponent(location.pathname + location.search);
+      location.assign(setup ? "/setup" : `/login?next=${next}`);
+    }
+    throw new Error(message);
+  }
   return data as T;
 }
 

@@ -228,6 +228,16 @@ function AssetDetail({
             <dd>{fmt.bytes(asset.bytes)}</dd>
             <dt className="text-muted">Source</dt>
             <dd className="capitalize">{asset.source}</dd>
+            {asset.generation && (
+              <>
+                <dt className="text-muted">Prompt</dt>
+                <dd className="col-span-2 whitespace-pre-wrap text-[12px]">{asset.generation.prompt}</dd>
+                <dt className="text-muted">Seed</dt>
+                <dd>
+                  {asset.generation.seed} · {asset.generation.sampler} · {asset.generation.steps} steps
+                </dd>
+              </>
+            )}
             <dt className="text-muted">Category</dt>
             <dd>{asset.categoryHint ?? "—"}</dd>
             <dt className="text-muted">SHA-256</dt>

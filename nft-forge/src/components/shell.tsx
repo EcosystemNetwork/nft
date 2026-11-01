@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { cx, Toaster } from "./ui";
+import { api, cx, Toaster, useApi } from "./ui";
 
 const ICONS: Record<string, string> = {
   dashboard: "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
@@ -16,6 +16,7 @@ const ICONS: Record<string, string> = {
   qa: "M9 12l2 2 4-4M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z",
   export: "M12 3v12M7 10l5 5 5-5M4 21h16",
   cloud: "M7 18a5 5 0 0 1-.9-9.9A6 6 0 0 1 17.7 8 4.5 4.5 0 0 1 17.5 18H7zM12 11v6M9.5 13.5 12 11l2.5 2.5",
+  sale: "M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01",
   deploy: "M12 2c3 2 5 6 5 10l-2 3H9l-2-3c0-4 2-8 5-10zM9 15l-2 5 3-2M15 15l2 5-3-2M12 9h.01",
   settings:
     "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z",
@@ -54,6 +55,39 @@ export function Logo() {
         <div className="text-[10px] font-medium tracking-[0.2em] text-muted">COLLECTION STUDIO</div>
       </div>
     </Link>
+  );
+}
+
+export const STUDIO_NAV: NavItem[] = [
+  { href: "/", label: "Projects", icon: "dashboard" },
+  { href: "/account", label: "Studio access", icon: "settings" },
+];
+
+export function SessionFooter() {
+  const { data } = useApi<{ user: { name: string; email: string; role: string } }>("/api/auth/me");
+  const user = data?.user;
+  return (
+    <div className="mt-3 border-t border-line px-2 pt-3">
+      {user ? (
+        <>
+          <div className="truncate text-[13px] text-ink">{user.name}</div>
+          <div className="truncate text-[11px] text-dim">
+            {user.role} · {user.email}
+          </div>
+        </>
+      ) : (
+        <div className="text-[12px] text-dim">Studio session</div>
+      )}
+      <button
+        type="button"
+        className="mt-2 text-[12px] text-muted hover:text-ink"
+        onClick={() => {
+          void api("/api/auth/logout", { method: "POST" }).finally(() => location.assign("/login"));
+        }}
+      >
+        Sign out
+      </button>
+    </div>
   );
 }
 

@@ -94,6 +94,15 @@ New projects default to **Robinhood Chain** (Arbitrum Orbit L2, chain 4663; test
 | Mint | ~25.4k per token | — |
 | **All 3,333 tokens** | 14 transactions | **≈ 0.0018 ETH on mainnet** |
 
+**Public sale** (`/projects/<id>/sale`, contract `mint`):
+- A team **reserve** the owner mints (`mintBatch`/`airdrop`). It can shrink after deployment (`reduceReserve`), never grow. Turning the sale off sets reserve = supply, which is the creator-mints-everything flow.
+- Up to **8 phases**, each with a time window, price, per-wallet limit, optional phase cap and optional **Merkle allowlist**. Leaves are OpenZeppelin `StandardMerkleTree` `(address, allowance)`. Allowlists are imported as CSV, and proofs are served one wallet at a time by `/api/mint/<id>/proof`.
+- The exact payment is required (no silent overpay), at most 50 per transaction, `pause`, and `withdraw` to a payout address. `mint` is `nonReentrant` and uses `_safeMint`.
+- **Delayed reveal** (optional): tokens show a placeholder until `reveal(secret, baseURI, offset)`. The offset is `keccak256(secret, entropy) % supply`. The secret is committed at deployment and stored server-side in `evm-secrets.json`, which is never listed, with a backup download. The entropy accumulates from every public mint. Revealed metadata gives token N artwork `N + offset` under token N's own name (testnet: served by this server; mainnet: a separate IPFS CAR built from the Live sale panel). The contract rejects a reveal whose offset is stale. **Trust note:** the creator knows the secret, so they could in principle steer the offset by making extra public mints right before revealing. Minters can't. The provenance hash proves the artwork order regardless.
+- **Live sale** controls in the Deployment Studio: push phase changes on-chain, pause/resume, withdraw, reveal, freeze, and open the collector page at `/mint/<id>`. That page and `/api/mint/*` are public and read-only. They never expose allowlist contents or the secret.
+
+Contract tests run on an in-process EVM (Hardhat EDR) against the committed bytecode: `tests/contract.test.ts` (phases, allowlists, reserve, payments, reentrancy, reveal, randomized invariants) and `tests/sale.test.ts` (server config, proofs and reveal math checked against the contract).
+
 **Deployment flow:**
 1. **Wallet:** the browser wallet is discovered via EIP-6963 (Robinhood Wallet, MetaMask, Rabby, Coinbase…). NFT Forge switches it to Robinhood Chain, or adds the network if it's missing.
 2. **Testnet:**
@@ -146,13 +155,23 @@ Validation:
 
 Set `NEXT_PUBLIC_SOLANA_MAINNET_RPC` (and optionally `NEXT_PUBLIC_SOLANA_DEVNET_RPC`) to a dedicated RPC provider before deploying 3,333 tokens. The public endpoints are rate limited.
 
+## Studio accounts
+
+The first visit asks for an owner (name, email, password). Passwords are scrypt hashes in `data/auth/`, which is not committed. The owner adds editors and viewers from **Studio access**. Viewers can open the studio and cannot change it. Sessions last 14 days (`nf_session`, httpOnly). Set `NFT_FORGE_AUTH_SECRET` to pin the signing key; otherwise the server writes `data/auth/secret` on first use.
+
+## Diffusion
+
+**Diffusion** in a project talks to a local Automatic1111 web UI (`./webui.sh --api`). Set `NFT_FORGE_SD_URL` if it is not on `http://127.0.0.1:7860`. The studio never takes the host from the browser.
+
+txt2img, img2img, inpaint, and extras (upscale, GFPGAN, CodeFormer) use the web UI's own API. Prompt matrix, styles (`{prompt}`), attention weights, hires fix, clip skip, LoRA tags, seeds, and X/Y plots follow that web UI. Kept layers store the parameters block on the asset and in the PNG `parameters` chunk, so PNG info can load them back.
+
 ## Not built yet
 
 - 3D/Blender pipeline (PRD Phase 4; Blender isn't installed here)
-- Public mint (Core Candy Machine); the Studio currently mints the collection to the creator wallet
+- Public mint on Solana (Core Candy Machine). Robinhood Chain has a public sale.
 - Ethereum mainnet, other L2s and Sui adapters (Robinhood Chain and Solana are supported)
 - Pinning providers beyond Filebase (CARs work with any CAR-capable service today)
-- Auth/RBAC and multi-user
-- AI image generation for assets
+- Per-project permissions. Studio accounts exist (owner, editor, viewer). Every studio route and the reveal-secret download require a session. Collector routes (`/mint`, `/api/mint`, placeholder art, and revealed metadata) stay public.
+- Training, checkpoint merge, outpainting, and CLIP interrogator. The Diffusion desk covers txt2img, img2img, inpaint, hires fix, prompt matrix, X/Y plot, styles, LoRA tags, and PNG info, and it calls a local [Automatic1111](https://github.com/AUTOMATIC1111/stable-diffusion-webui) with `./webui.sh --api` (`NFT_FORGE_SD_URL`, default `http://127.0.0.1:7860`)
 
 Background job *history* persists across restarts, and a job that was running shows as "interrupted" and resumes from the files on disk.

@@ -70,17 +70,20 @@ test("testnet deployment: provenance from real renders, preview metadata, sane p
 });
 
 test("constructor arguments line up with the compiled contract's ABI", async () => {
-  const artifact = JSON.parse(readFileSync("src/lib/evm/ForgeCollection.artifact.json", "utf8")) as { abi: { type: string; inputs: { name: string; type: string }[] }[] };
+  const artifact = JSON.parse(readFileSync("src/lib/evm/ForgeCollection.artifact.json", "utf8")) as {
+    abi: { type: string; inputs: { name: string; type: string; components?: { name: string }[] }[] }[];
+  };
   const ctor = artifact.abi.find((x) => x.type === "constructor")!;
-  assert.deepEqual(
-    ctor.inputs.map((i) => i.name),
-    ["name_", "symbol_", "baseURI_", "contractURI_", "maxSupply_", "startTokenId_", "royaltyReceiver", "royaltyBps", "provenanceHash_", "initialOwner"],
-  );
+  assert.equal(ctor.inputs.length, 1);
   const d = await M.evm.createEvmDeployment(pid, { mode: "test", wallet: WALLET, testCount: 1 }, ORIGIN);
-  const args = M.evm.constructorArgs(d.params);
-  assert.equal(args.length, ctor.inputs.length);
-  assert.equal(typeof args[4], "bigint");
-  assert.equal(args[8], d.params.provenanceHash);
+  const [init] = M.evm.constructorArgs(d.params);
+  assert.deepEqual(Object.keys(init), ctor.inputs[0].components!.map((c) => c.name), "InitParams fields in ABI order");
+  assert.equal(typeof init.maxSupply, "bigint");
+  assert.equal(init.provenanceHash, d.params.provenanceHash);
+  // No public sale configured: the creator mints the whole supply.
+  assert.equal(d.params.reserved, d.params.maxSupply);
+  assert.equal(d.params.unrevealedURI, "");
+  assert.equal(d.params.payout, WALLET);
 });
 
 test("mainnet is gated: readiness, permanent hosting, typed name, single-use approval", async () => {
@@ -102,7 +105,8 @@ test("mainnet is gated: readiness, permanent hosting, typed name, single-use app
 test("deployment events are validated and recorded", async () => {
   const d = await M.evm.createEvmDeployment(pid, { mode: "test", wallet: WALLET, testCount: 5, batchSize: 2 }, ORIGIN);
   await assert.rejects(M.evm.applyEvmEvent(pid, d.id, { type: "deployed", address: "0x123" as `0x${string}`, tx: TX(1) }), /Invalid/);
-  await assert.rejects(M.evm.applyEvmEvent(pid, d.id, { type: "mint-sent", tx: TX(2), firstTokenId: 5, quantity: 2 }), /outside/); // #5–#6 > target 5
+  await assert.rejects(M.evm.applyEvmEvent(pid, d.id, { type: "mint-sent", tx: TX(2), firstTokenId: 1, quantity: 6 }), /outside/); // 6 > reserve target 5
+  await assert.rejects(M.evm.applyEvmEvent(pid, d.id, { type: "mint-sent", tx: TX(2), firstTokenId: 12, quantity: 2 }), /outside/); // #13 > supply 12
   await assert.rejects(M.evm.applyEvmEvent(pid, d.id, { type: "mint-confirmed", tx: TX(99) }), /Unknown mint/);
   await M.evm.applyEvmEvent(pid, d.id, { type: "deploy-sent", tx: TX(1) });
   let rec = await M.evm.applyEvmEvent(pid, d.id, { type: "deployed", address: OTHER, tx: TX(1) });

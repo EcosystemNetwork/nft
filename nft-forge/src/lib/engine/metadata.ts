@@ -95,3 +95,25 @@ export function validateTokenMetadata(meta: TokenMetadata, template: MetadataTem
   }
   return problems;
 }
+
+/**
+ * Delayed reveal: token `tokenId` receives artwork `artworkId(tokenId)` (ForgeCollection.artworkId).
+ * Every artwork is used exactly once.
+ */
+export function artworkIdFor(tokenId: number, startTokenId: number, supply: number, offset: number): number {
+  return startTokenId + ((tokenId - startTokenId + offset) % supply);
+}
+
+/** Revealed metadata for `tokenId`: the artwork's image and traits under the token's own name. */
+export function buildRevealedTokenMetadata(
+  template: MetadataTemplate,
+  categories: TraitCategory[],
+  canvas: CanvasConfig,
+  artwork: Nft,
+  tokenId: number,
+): TokenMetadata {
+  const meta = buildTokenMetadata(template, categories, canvas, artwork);
+  meta.name = template.namePattern.replaceAll("{collection}", template.collectionName).replaceAll("{id}", String(tokenId));
+  if (template.externalUrl) meta.external_url = joinUri(template.externalUrl, String(tokenId));
+  return meta;
+}
