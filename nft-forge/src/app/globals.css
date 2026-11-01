@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #07070d;
+  --color-panel: #0e0e19;
+  --color-panel-2: #141425;
+  --color-panel-3: #1b1b31;
+  --color-line: #24243d;
+  --color-line-2: #32325a;
+  --color-ink: #ececf6;
+  --color-muted: #8d8daa;
+  --color-dim: #5c5c7a;
+  --color-violet: #8b5cf6;
+  --color-violet-2: #a78bfa;
+  --color-cyan: #22d3ee;
+  --color-amber: #f59e0b;
+  --color-good: #22c55e;
+  --color-bad: #f43f5e;
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  color-scheme: dark;
+}
+
+body {
+  background-image:
+    radial-gradient(1200px 600px at 85% -10%, rgb(139 92 246 / 0.12), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgb(34 211 238 / 0.06), transparent 60%);
+  background-attachment: fixed;
+}
+
+::selection {
+  background: rgb(139 92 246 / 0.4);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a2a46 transparent;
+}
+
+.glow-card {
+  background:
+    radial-gradient(600px 200px at 100% 0%, rgb(139 92 246 / 0.28), transparent 70%),
+    radial-gradient(400px 200px at 0% 100%, rgb(34 211 238 / 0.12), transparent 70%),
+    var(--color-panel);
+}
+
+.checker {
+  background-color: #11111d;
+  background-image:
+    linear-gradient(45deg, #191929 25%, transparent 25%),
+    linear-gradient(-45deg, #191929 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #191929 75%),
+    linear-gradient(-45deg, transparent 75%, #191929 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+}
+
+input[type="range"] {
+  accent-color: var(--color-violet);
+}

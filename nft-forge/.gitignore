@@ -1,0 +1,8 @@
+node_modules
+.next
+data
+*.tsbuildinfo
+next-env.d.ts
+.env*
+.devnet-test-keypair.json
+.robinhood-testnet-key.json
